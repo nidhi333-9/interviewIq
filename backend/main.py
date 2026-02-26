@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 
 from parser import extract_text_from_pdf
-from skill_extractor import extract_skills, filter_skills_by_role
+from resume_extractor import extract_skills, extract_experience, extract_projects,extract_achievements
 from question_engine import generate_questions, questions_by_time
 
 app = FastAPI()
@@ -19,30 +19,19 @@ app.add_middleware(
 def home():
   return {"message": "Resume Analyzer Backend Running"}
 
+@app.post("/debug")
+async def debug_resume(resume: UploadFile = File(...)):
+    await resume.seek(0)
+    text = extract_text_from_pdf(resume.file)
+    return {"raw_text": text}
 @app.post("/upload")
-async def upload_resume(
-  resume: UploadFile = File(...),
-  role: str = Form(...),
-  time: int = Form(...)
-):
-  
-  # Extract text
-  text = extract_text_from_pdf(resume.file)
+async def upload_resume(resume: UploadFile = File(...)):
+    await resume.seek(0)
+    text = extract_text_from_pdf(resume.file)
 
-  #Extract skills
-  skills = extract_skills(text)
-
-  # Filter by role
-  filtered_skills = filter_skills_by_role(skills, role)
-
-  #Generate questions
-  questions = generate_questions(filtered_skills, role)
-
-  # Time based selection
-  final_questions = questions[:questions_by_time(time)]
-
-  return {
-    "role": role,
-    "skills": filtered_skills,
-    "questions": final_questions
-  }
+    return {
+        "skills": extract_skills(text),
+        "experience": extract_experience(text),
+        "projects": extract_projects(text),
+        "achievements": extract_achievements(text),
+    }
