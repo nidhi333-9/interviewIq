@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 
 from parser import extract_text_from_pdf
-from resume_extractor import extract_skills, extract_experience, extract_projects,extract_achievements
+from resume_extractor import (extract_skills, extract_experience, extract_projects,extract_achievements, refine_skills)
 from question_engine import generate_questions, questions_by_time
 
 app = FastAPI()
@@ -28,9 +28,10 @@ async def debug_resume(resume: UploadFile = File(...)):
 async def upload_resume(resume: UploadFile = File(...)):
     await resume.seek(0)
     text = extract_text_from_pdf(resume.file)
-
+    raw_skills = extract_skills(text)
+    cleaned_skills = refine_skills(raw_skills)
     return {
-        "skills": extract_skills(text),
+        "skills": cleaned_skills,
         "experience": extract_experience(text),
         "projects": extract_projects(text),
         "achievements": extract_achievements(text),
