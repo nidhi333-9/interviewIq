@@ -2,6 +2,10 @@ from dotenv import load_dotenv
 import os
 import json
 import re
+import base64
+import numpy as np
+import cv2
+import mediapipe as mp
 
 load_dotenv()
 
@@ -9,10 +13,8 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from services.parser import extract_text_from_pdf
-from services.rag_context import build_resume_context
-from services.rag_question_generator import generate_rag_questions
-from services.question_engine import InterviewSession, call_gemini_with_retry
-
+from services.resume_extractor import extract_skills, extract_experience, extract_projects, extract_achievements
+from services.question_engine import generate_questions, InterviewSession
 app = FastAPI()
 
 app.add_middleware(
@@ -23,37 +25,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global session (Note: In a real app, use a dict or database to handle multiple users)
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh()
+blink_count = 0
+prev_blink = False
+
+# Global session (for single user / college demo)
 session = None
-
-# --- Helper Function to Clean and Parse AI JSON ---
-def parse_ai_json(text):
-    try:
-        # Remove markdown code blocks if present
-        clean_text = re.sub(r"```json|```", "", text).strip()
-        return json.loads(clean_text)
-    except Exception as e:
-        print(f"JSON Parsing Error: {e}")
-        return {"skills": [], "projects": [], "experience": "Not found"}
-
-# --- New Optimized Single Extraction Call ---
-def extract_resume_data(text):
-    prompt = f"""
-    Analyze this resume text carefully. 
-    Extract:
-    1. Skills (A list of technical skills)
-    2. Significant Projects (A list of project titles/descriptions)
-    3. Work Experience (A concise summary of roles)
-    4. Achievements (A list of key highlights)
-
-    Return ONLY a valid JSON object with these keys: 
-    "skills", "projects", "experience", "achievements".
-    
-    Resume Text:
-    {text}
-    """
-    response = call_gemini_with_retry(prompt)
-    return parse_ai_json(response.text)
 
 # --- Endpoints ---
 
@@ -61,14 +39,87 @@ def extract_resume_data(text):
 def home():
     return {"message": "InterviewIQ Backend Running"}
 
+
 @app.post("/upload")
 async def upload_resume(resume: UploadFile = File(...)):
     await resume.seek(0)
     text = extract_text_from_pdf(resume.file)
-    
-    # ONE API call instead of four!
-    data = extract_resume_data(text)
-    return data
+
+    skills       = extract_skills(text)
+    experience   = extract_experience(text)
+    projects     = extract_projects(text)
+    achievements = extract_achievements(text)
+
+    return {
+        "skills": skills,
+        "experience": experience,
+        "projects": projects,
+        "achievements": achievements
+    }
+
+def decode_image(base64_str):
+    encoded = base64_str.split(",")[1]
+    nparr = np.frombuffer(base64.b64decode(encoded), np.uint8)
+    return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+@app.post("/analyze")
+async def analyze(data: dict):
+    try:
+        image = decode_image(data["image"])
+
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = face_mesh.process(rgb)
+
+        if not results.multi_face_landmarks:
+            print("No face ❌")
+            return {"face": False}
+
+        landmarks = results.multi_face_landmarks[0]
+
+        # 👁️ Eye landmark positions
+        nose_x = landmarks.landmark[1].x  
+        left_eye_x = landmarks.landmark[33].x
+        right_eye_x = landmarks.landmark[263].x
+        eye_center = (left_eye_x + right_eye_x) / 2
+        diff = abs(eye_center - nose_x)
+        # 🎯 Eye contact logic
+        if diff < 0.08:  # Threshold for looking forward
+            eye_contact = "Good"
+        elif diff < 0.15:  # Threshold for slight deviation
+            eye_contact = "Slightly Away"    
+        else:
+            eye_contact = "Looking Away"
+
+        print("Eye Contact:", eye_contact, "| Diff:", diff)
+        top = landmarks.landmark[159].y
+        bottom = landmarks.landmark[145].y
+
+        eye_opening = abs(top - bottom)
+
+# 🎯 Blink detection
+        global blink_count, prev_blink
+
+        if eye_opening < 0.015:
+            blink = True
+        else:
+            blink = False
+
+# Count only when blink starts
+        if blink and not prev_blink:
+             blink_count += 1
+
+        prev_blink = blink
+
+        print("Blink:", blink, "| Total Blinks:", blink_count)
+        return {
+            "face": True,
+            "eye_contact": eye_contact,
+            "blink": blink,
+            "blink_count": blink_count
+        }
+
+    except Exception as e:
+        print("Error:", e)
+        return {"error": "failed"}
 
 @app.post("/start_interview")
 async def start_interview(
@@ -76,41 +127,40 @@ async def start_interview(
     role: str = Form(...),
     time: int = Form(...)
 ):
-    global session
+    global session,blink_count, prev_blink
+    blink_count = 0
+    prev_blink = False
+
 
     await file.seek(0)
-    text = extract_text_from_pdf(file.file)
 
-    # 1. Extract data (1 API Call)
-    data = extract_resume_data(text)
-    
-    # 2. Build context for RAG
-    context = build_resume_context(data['skills'], data['projects'], data['experience'])
+    # generate_questions handles extraction + question gen internally
+    result = generate_questions(
+        pdf_file=file.file,
+        job_role=role,
+        interview_duration_minutes=time
+    )
 
-    # 3. Generate questions (1 API Call)
-    question_bank = generate_rag_questions(context, role)
+    question_bank   = result["questions"]
+    resume_context  = result["resume_context"]
 
-    # 4. Initialize Session
-    session = InterviewSession(question_bank, time)
+    # Initialize session
+    session = InterviewSession(question_bank, time, resume_context)
     first_question = session.next_question()
 
     return {
-        "skills": data['skills'],
-        "projects": data['projects'],
-        "first_question": first_question
+        "first_question": first_question,
+        "total_questions": result["total"],
+        "resume_context": resume_context
     }
+
 
 @app.post("/submit_answer")
 async def submit_answer(data: dict):
     if session is None:
         raise HTTPException(status_code=400, detail="Interview not started")
 
-    # 1 API Call (Evaluation)
-    score = session.submit_answer(
-        data["question"],
-        data["answer"]
-    )
-
+    score  = session.submit_answer(data["question"], data["answer"])
     next_q = session.next_question()
 
     if next_q is None:
@@ -121,6 +171,6 @@ async def submit_answer(data: dict):
         }
 
     return {
-        "score": score,
-        "next_question": next_q
+        "next_question": next_q,
+        "score": score
     }

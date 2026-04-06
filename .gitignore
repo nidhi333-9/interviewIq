@@ -13,7 +13,10 @@ lerna-debug.log*
 # Node / Frontend
 # =========================
 node_modules
-dist
+.env
+dist/
+build/
+
 dist-ssr
 *.local
 
@@ -47,3 +50,15 @@ env/
 *.sln
 *.sw?
 
+# =========================
+# Editor / OS files
+# =========================
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
