@@ -2,25 +2,22 @@ import { useState } from "react";
 import axios from "axios";
 const Card = () => {
   const [file, setFile] = useState(null);
-  const [role, setRole] = useState("");
+  const [level, setLevel] = useState("");
   const [time, setTime] = useState("");
 
   const handleSubmit = async () => {
-    if (!file || !role || !time) {
+    if (!file || !level || !time) {
       alert("Please fill all fields");
       return;
     }
+
     const formData = new FormData();
     formData.append("resume", file);
-    formData.append("role", role);
+    formData.append("level", level);
     formData.append("time", time);
 
     try {
-      const res = await axios.post("http://localhost:8000/upload", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      });
+      const res = await axios.post("http://localhost:8000/upload", formData);
 
       console.log(res.data);
     } catch (err) {
@@ -41,15 +38,45 @@ const Card = () => {
           onChange={(e) => setFile(e.target.files[0])}
         />
 
-        {/* Job Role */}
-        <label className="text-sm text-gray-300 mb-2 block">Job Role</label>
-        <input
-          type="text"
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          placeholder="Enter Job Role"
-          className="w-full mb-5 p-3 rounded-lg bg-black/40 border border-white/10 focus:outline-none focus:border-indigo-500"
-        />
+        {/* Level */}
+        <label className="text-sm text-gray-300 mb-3 block">Select Level</label>
+
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          {[
+            { name: "Beginner", color: "border-green-500 text-green-400" },
+            {
+              name: "Intermediate",
+              color: "border-yellow-500 text-yellow-400",
+            },
+            { name: "Advanced", color: "border-red-500 text-red-400" },
+          ].map((lvl) => (
+            <label
+              key={lvl.name}
+              className={`flex flex-col items-center justify-center p-4 rounded-xl cursor-pointer border transition-all duration-200
+      ${
+        level === lvl.name
+          ? `${lvl.color} bg-white/10 scale-105`
+          : "border-white/10 bg-black/40 hover:border-indigo-500"
+      }`}
+            >
+              <input
+                type="radio"
+                name="level"
+                value={lvl.name}
+                onChange={(e) => setLevel(e.target.value)}
+                className="hidden"
+              />
+
+              <span className="text-lg font-semibold">{lvl.name}</span>
+
+              <span className="text-xs text-gray-400 mt-1">
+                {lvl.name === "Beginner" && "Basic Questions"}
+                {lvl.name === "Intermediate" && "Moderate Difficulty"}
+                {lvl.name === "Advanced" && "Expert Level"}
+              </span>
+            </label>
+          ))}
+        </div>
 
         {/* Time */}
         <label className="text-sm text-gray-300 mb-3 block">
