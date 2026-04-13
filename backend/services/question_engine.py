@@ -1,5 +1,3 @@
-# services/question_engine.py
-
 import ollama
 import json
 from services.parser import extract_text_from_pdf

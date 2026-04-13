@@ -1,9 +1,9 @@
 from dotenv import load_dotenv
-import os
-import json
-import re
-
 load_dotenv()
+from fastapi.responses import StreamingResponse
+from services.voice import text_to_speech
+import io
+
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +15,8 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # allow_origins=["*"],
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -59,25 +60,34 @@ async def start_interview(
 
     await file.seek(0)
 
-    # generate_questions handles extraction + question gen internally
     result = generate_questions(
         pdf_file=file.file,
         job_role=role,
         interview_duration_minutes=time
     )
 
-    question_bank   = result["questions"]
-    resume_context  = result["resume_context"]
+    question_bank  = result["questions"]
+    resume_context = result["resume_context"]
 
-    # Initialize session
+    # ✅ Guard: check if questions were actually generated
+    all_questions = (
+        question_bank.get("easy", []) +
+        question_bank.get("medium", []) +
+        question_bank.get("hard", [])
+    )
+    if not all_questions:
+        raise HTTPException(status_code=500, detail="Failed to generate questions. Please try again.")
+
     session = InterviewSession(question_bank, time, resume_context)
     first_question = session.next_question()
 
     return {
         "first_question": first_question,
-        "total_questions": result["total"],
+        # "total_questions": result["total"],
+        "total_questions": len(session.questions),
         "resume_context": resume_context
     }
+
 
 
 @app.post("/submit_answer")
@@ -99,3 +109,18 @@ async def submit_answer(data: dict):
         "next_question": next_q,
         "score": score
     }
+
+
+@app.post("/speak")
+async def speak(data: dict):
+    text = data.get("text")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="No text provided")
+
+    audio_bytes = text_to_speech(text)
+
+    return StreamingResponse(
+        io.BytesIO(audio_bytes),
+        media_type="audio/mpeg"
+    )
