@@ -25,14 +25,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-<<<<<<< HEAD
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh()
 blink_count = 0
 prev_blink = False
-
-=======
->>>>>>> 00fc790 (question generation and used ollama)
 # Global session (for single user / college demo)
 session = None
 

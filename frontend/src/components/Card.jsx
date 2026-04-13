@@ -42,7 +42,7 @@ const STAGE = {
   FINISHED: "finished",
 };
 
-const Card = () => {
+const Card = ({ onStart }) => {
   // Setup state
   const [file, setFile] = useState(null);
   const [role, setRole] = useState("");
@@ -75,6 +75,7 @@ const Card = () => {
       return;
     }
     setError("");
+    onStart(parseInt(time));
     setStage(STAGE.ASKING);
 
     const formData = new FormData();
