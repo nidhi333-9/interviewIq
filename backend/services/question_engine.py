@@ -1,107 +1,210 @@
-from google import genai
-import os
-import random
-import re
-import time
-from dotenv import load_dotenv
-load_dotenv()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+import ollama
+import json
+from services.parser import extract_text_from_pdf
+from services.resume_extractor import (
+    extract_skills,
+    extract_experience,
+    extract_projects,
+    extract_achievements
+)
 
-import time
 
-# Track daily usage
-_daily_request_count = 0
-_MAX_DAILY_REQUESTS = 1400  # Stay under the free tier limit
+# ── 1. Resume Context Builder ────────────────────────────────────────────────
 
-def call_gemini_with_retry(prompt, retries=3):
-    global _daily_request_count
-    
-    if _daily_request_count >= _MAX_DAILY_REQUESTS:
-        raise Exception("Daily quota limit reached. Try again tomorrow.")
-    
-    for attempt in range(retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.0-flash-lite",
-                contents=prompt
-            )
-            _daily_request_count += 1
-            return response
-        except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                if "per_day" in str(e).lower() or "GenerateRequestsPerDay" in str(e):
-                    raise Exception("Daily quota exhausted. Wait 24hrs or upgrade plan.")
-                sleep_time = 30 * (attempt + 1)
-                print(f"Rate limit hit. Waiting {sleep_time}s...")
-                time.sleep(sleep_time)
-            else:
-                raise e
-    raise Exception("Retries exhausted.")
+def build_resume_context(pdf_file):
+    raw_text = extract_text_from_pdf(pdf_file)
 
-def question_count(time_minutes):
-    if time_minutes <= 10: return 3
-    if time_minutes <= 20: return 5
-    if time_minutes <= 30: return 7
-    return 10
+    skills       = extract_skills(raw_text)
+    experience   = extract_experience(raw_text)
+    projects     = extract_projects(raw_text)
+    achievements = extract_achievements(raw_text)
 
-def evaluate_answer(question, answer):
-    """Evaluates the answer and returns a numeric score."""
+    context = f"""
+SKILLS:
+{", ".join(skills) if skills else "Not found"}
+
+EXPERIENCE:
+{chr(10).join(experience) if experience else "Not found"}
+
+PROJECTS:
+{chr(10).join(projects) if projects else "Not found"}
+
+ACHIEVEMENTS:
+{chr(10).join(achievements) if achievements else "Not found"}
+"""
+    return context.strip()
+
+
+# ── 2. Question Generator ────────────────────────────────────────────────────
+
+def generate_questions(pdf_file, job_role, interview_duration_minutes):
+    num_questions = max(3, interview_duration_minutes // 2)
+    easy_count    = max(1, num_questions // 3)
+    medium_count  = max(1, num_questions // 3)
+    hard_count    = num_questions - easy_count - medium_count
+
+    resume_context = build_resume_context(pdf_file)
+
     prompt = f"""
-    Evaluate the following technical interview answer.
-    Question: {question}
-    Answer: {answer}
-    
-    Provide a score between 0 and 100 based on accuracy and depth.
-    Return ONLY the number. No explanation.
-    """
-    response = call_gemini_with_retry(prompt)
-    if not response: return 50
+You are a professional HR interviewer conducting a technical interview.
 
-    # Extract digits specifically to avoid issues with extra text
-    numbers = re.findall(r"\d+", response.text.strip())
-    return int(numbers[0]) if numbers else 50
+Candidate Resume:
+{resume_context}
 
-def next_difficulty(score):
-    if score >= 75: return "hard"
-    if score >= 50: return "medium"
-    return "easy"
+Target Job Role: {job_role}
+Interview Duration: {interview_duration_minutes} minutes
+Total Questions Needed: {num_questions} ({easy_count} easy, {medium_count} medium, {hard_count} hard)
+
+Generate exactly {num_questions} interview questions strictly based on the candidate's
+resume and the target job role. Questions should feel like a real HR interview.
+
+Rules:
+- Easy: Basic questions about listed skills and background
+- Medium: Situational or project-based questions from their experience  
+- Hard: Deep technical or problem-solving questions challenging their expertise
+
+Return ONLY valid JSON, no explanation, no markdown:
+{{
+  "easy": ["question1", "question2"],
+  "medium": ["question1", "question2"],
+  "hard": ["question1", "question2"]
+}}
+"""
+
+    try:
+        response = ollama.chat(
+            model="llama3.2",
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        text = response["message"]["content"].strip()
+        text = text.replace("```json", "").replace("```", "").strip()
+
+        start = text.find("{")
+        end   = text.rfind("}") + 1
+        text  = text[start:end]
+
+        questions = json.loads(text)
+
+        for key in ["easy", "medium", "hard"]:
+            if key not in questions:
+                questions[key] = []
+
+        return {
+            "questions": questions,
+            "total": num_questions,
+            "resume_context": resume_context
+        }
+
+    except json.JSONDecodeError as e:
+        print(f"JSON parse error: {e}")
+        return {"questions": {"easy": [], "medium": [], "hard": []}, "total": 0, "resume_context": ""}
+
+    except Exception as e:
+        print(f"Ollama error: {e}")
+        raise
+
+
+# ── 3. Interview Session ─────────────────────────────────────────────────────
 
 class InterviewSession:
-    def __init__(self, question_bank, time_minutes):
-        self.question_bank = question_bank
-        self.total_questions = question_count(time_minutes)
-        self.current_difficulty = "medium"
-        self.asked_questions = []
-        self.scores = []
+    def __init__(self, question_bank: dict, duration_minutes: int, resume_context: str):
+        self.resume_context    = resume_context
+        self.duration_minutes  = duration_minutes
+        self.scores            = []
+        self.answered          = []  # list of {question, answer, score, feedback}
+
+        # Flatten questions: easy first, then medium, then hard
+        self.questions = (
+            question_bank.get("easy",   []) +
+            question_bank.get("medium", []) +
+            question_bank.get("hard",   [])
+        )
+        self.current_index = 0
 
     def next_question(self):
-        if len(self.asked_questions) >= self.total_questions:
-            return None
+        """Return next question or None if interview is over."""
+        if self.current_index < len(self.questions):
+            q = self.questions[self.current_index]
+            self.current_index += 1
+            return q
+        return None
 
-        questions = self.question_bank.get(self.current_difficulty, [])
-        available = [q for q in questions if q not in self.asked_questions]
+    def submit_answer(self, question: str, answer: str) -> dict:
+        """Evaluate answer using Ollama, return score + feedback."""
+        prompt = f"""
+You are a strict but fair HR interviewer evaluating a candidate's answer.
 
-        # Fallback to any difficulty if current one is exhausted
-        if not available:
-            for level in ["easy", "medium", "hard"]:
-                available += [q for q in self.question_bank.get(level, []) if q not in self.asked_questions]
+Resume Context:
+{self.resume_context}
 
-        if not available: return None
+Interview Question:
+{question}
 
-        question = random.choice(available)
-        self.asked_questions.append(question)
-        return question
+Candidate's Answer:
+{answer}
 
-    def submit_answer(self, question, answer):
-        score = evaluate_answer(question, answer)
+Evaluate the answer and return ONLY valid JSON, no explanation, no markdown:
+{{
+  "score": <integer 0-10>,
+  "feedback": "<one sentence feedback>",
+  "missed_points": ["<point1>", "<point2>"]
+}}
+"""
+        try:
+            response = ollama.chat(
+                model="llama3.2",
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            text = response["message"]["content"].strip()
+            text = text.replace("```json", "").replace("```", "").strip()
+
+            start = text.find("{")
+            end   = text.rfind("}") + 1
+            text  = text[start:end]
+
+            result = json.loads(text)
+
+            score    = result.get("score", 0)
+            feedback = result.get("feedback", "")
+            missed   = result.get("missed_points", [])
+
+        except Exception as e:
+            print(f"Evaluation error: {e}")
+            score, feedback, missed = 0, "Could not evaluate answer.", []
+
         self.scores.append(score)
-        self.current_difficulty = next_difficulty(score)
-        return score
+        self.answered.append({
+            "question":     question,
+            "answer":       answer,
+            "score":        score,
+            "feedback":     feedback,
+            "missed_points": missed
+        })
 
-    def interview_summary(self):
-        if not self.scores: return {}
+        return {"score": score, "feedback": feedback, "missed_points": missed}
+
+    def interview_summary(self) -> dict:
+        """Return full summary after interview ends."""
+        if not self.scores:
+            return {"average_score": 0, "total_questions": 0, "details": []}
+
+        avg = round(sum(self.scores) / len(self.scores), 2)
+
+        # Performance label
+        if avg >= 8:
+            performance = "Excellent"
+        elif avg >= 6:
+            performance = "Good"
+        elif avg >= 4:
+            performance = "Average"
+        else:
+            performance = "Needs Improvement"
+
         return {
-            "questions_answered": len(self.scores),
-            "average_score": round(sum(self.scores) / len(self.scores), 2),
-            "scores": self.scores
+            "average_score":    avg,
+            "performance":      performance,
+            "total_questions":  len(self.scores),
+            "details":          self.answered
         }
