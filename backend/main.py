@@ -3,7 +3,7 @@ load_dotenv()
 from fastapi.responses import StreamingResponse
 from services.voice import text_to_speech
 import io
-
+from pydantic import BaseModel
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -124,3 +124,14 @@ async def speak(data: dict):
         io.BytesIO(audio_bytes),
         media_type="audio/mpeg"
     )
+
+class AnalysisRequest(BaseModel):
+    image: str
+
+@app.post("/analyze")
+async def analyze_camera(data: AnalysisRequest):
+    return {
+        "eye_contact": "Looking at Camera",
+        "blink": False,
+        "status": "success"
+    }

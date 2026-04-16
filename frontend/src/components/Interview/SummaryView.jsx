@@ -1,9 +1,9 @@
 import Button from "../UI/Button";
 import ScoreBadge from "../UI/ScoreBadge";
 
-const SummaryView = ({ summary }) => {
+const SummaryView = ({ summary, sessionData }) => {
   const avg = summary.average_score;
-
+  const cam = summary.camera;
   return (
     <div className="w-full max-w-lg bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-700">
       <h2 className="text-2xl font-bold text-center text-white mb-2">
@@ -43,7 +43,53 @@ const SummaryView = ({ summary }) => {
           </p>
         </div>
       </div>
+      {cam && (
+        <div className="grid grid-cols-3 gap-3 mb-6">
+          <div className="bg-black/40 rounded-xl p-4 border border-white/5 text-center">
+            <p className="text-[9px] text-gray-500 uppercase font-black mb-1">
+              Confidence
+            </p>
+            <p
+              className={`text-lg font-bold
+              ${
+                cam.confidence === "High"
+                  ? "text-green-400"
+                  : cam.confidence === "Medium"
+                    ? "text-yellow-400"
+                    : "text-red-400"
+              }`}
+            >
+              {cam.confidence}
+            </p>
+          </div>
+          <div className="bg-black/40 rounded-xl p-4 border border-white/5 text-center">
+            <p className="text-[9px] text-gray-500 uppercase font-black mb-1">
+              Eye Contact
+            </p>
+            <p
+              className={`text-lg font-bold
+              ${
+                cam.eye_contact_percent >= 70
+                  ? "text-green-400"
+                  : cam.eye_contact_percent >= 40
+                    ? "text-yellow-400"
+                    : "text-red-400"
+              }`}
+            >
+              {cam.eye_contact_percent}%
+            </p>
+          </div>
 
+          <div className="bg-black/40 rounded-xl p-4 border border-white/5 text-center">
+            <p className="text-[9px] text-gray-500 uppercase font-black mb-1">
+              Blinks
+            </p>
+            <p className="text-lg font-bold text-blue-400">
+              {cam.total_blinks}
+            </p>
+          </div>
+        </div>
+      )}
       {/* ── 2. Detailed Breakdown ── */}
       <div className="space-y-4 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
         {summary.details.map((d, i) => (

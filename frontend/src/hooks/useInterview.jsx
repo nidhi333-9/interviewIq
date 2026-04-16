@@ -22,6 +22,7 @@ export const useInterview = () => {
     summary: null,
     isSpeaking: false,
     error: "",
+    answered: [],
   });
 
   const recognitionRef = useRef(null);
@@ -167,7 +168,8 @@ export const useInterview = () => {
         ...prev,
         error: "I didn't catch that. Please try speaking again!",
       }));
-      setStage(STAGE.ASKING);
+      // setStage(STAGE.ASKING);
+      startListening();
       return;
     }
 
@@ -184,6 +186,16 @@ export const useInterview = () => {
         scores: [...prev.scores, res.data.score.score],
         summary: res.data.summary || prev.summary,
         nextQuestion: res.data.next_question || null, // ✅ store it
+        answered: [
+          ...(prev.answered || []),
+          {
+            question: currentQuestionRef.current,
+            answer,
+            score: res.data.score.score,
+            feedback: res.data.score.feedback,
+            missed_points: res.data.score.missed_points || [],
+          },
+        ],
       }));
 
       setStage(STAGE.RESULT);

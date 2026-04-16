@@ -80,7 +80,7 @@ const InterviewView = ({
 
       {/* ── 5. Dynamic Action Buttons ── */}
       <div className="flex gap-3 mt-4">
-        {stage === "listening" && (
+        {(stage === "listening" || (stage === "asking" && error)) && (
           <Button
             variant={transcript.trim() ? "danger" : "ghost"}
             onClick={onStopAndSubmit}
@@ -88,7 +88,7 @@ const InterviewView = ({
           >
             {transcript.trim()
               ? "🎙 Stop & Submit"
-              : "No Speech Detected (Cancle)"}
+              : "No Speech Detected (Cancel)"}
           </Button>
         )}
 
@@ -107,7 +107,7 @@ const InterviewView = ({
           </>
         )}
 
-        {stage === "asking" && !isSpeaking && (
+        {stage === "asking" && !isSpeaking && !error && (
           <Button
             variant="success"
             onClick={onStartListening}

@@ -10,6 +10,7 @@ const SetupView = ({
   setTime,
   onStart,
   error,
+  isLoading,
 }) => {
   return (
     <div className="w-full max-w-md bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl animate-in fade-in zoom-in duration-500">
@@ -93,6 +94,7 @@ const SetupView = ({
         onClick={onStart}
         variant="primary"
         className="w-full py-4 text-base"
+        isLoading={isLoading}
       >
         Launch Interview 🚀
       </Button>
