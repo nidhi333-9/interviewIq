@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from services.parser import extract_text_from_pdf
 from services.resume_extractor import extract_skills, extract_experience, extract_projects, extract_achievements
 from services.question_engine import generate_questions, InterviewSession
+from services.vision import analyze_frame
 app = FastAPI()
 
 app.add_middleware(
@@ -130,8 +131,9 @@ class AnalysisRequest(BaseModel):
 
 @app.post("/analyze")
 async def analyze_camera(data: AnalysisRequest):
+    result = analyze_frame(data.image)
     return {
-        "eye_contact": "Looking at Camera",
-        "blink": False,
-        "status": "success"
+        "eye_contact": result["eye_contact"],
+        "blink":       result["blink"],
+        "status":      "success"
     }

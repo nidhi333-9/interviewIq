@@ -99,9 +99,9 @@ const SetupView = ({
         Launch Interview 🚀
       </Button>
 
-      <p className="text-center text-[10px] text-gray-500 mt-4 uppercase tracking-widest">
+      {/* <p className="text-center text-[10px] text-gray-500 mt-4 uppercase tracking-widest">
         Powered by AI Evaluation
-      </p>
+      </p> */}
     </div>
   );
 };
