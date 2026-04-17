@@ -1,5 +1,6 @@
-import ollama
 import json
+import os
+from groq import Groq
 from services.parser import extract_text_from_pdf
 from services.resume_extractor import (
     extract_skills,
@@ -8,8 +9,18 @@ from services.resume_extractor import (
     extract_achievements
 )
 
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# ── 1. Resume Context Builder ────────────────────────────────────────────────
+def call_llm(prompt: str) -> str:
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        max_tokens=1000,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
+
+# ── 1. Resume Context Builder ─────────────────────────────────────────────────
 
 def build_resume_context(pdf_file):
     raw_text = extract_text_from_pdf(pdf_file)
@@ -35,7 +46,7 @@ ACHIEVEMENTS:
     return context.strip()
 
 
-# ── 2. Question Generator ────────────────────────────────────────────────────
+# ── 2. Question Generator ─────────────────────────────────────────────────────
 
 def generate_questions(pdf_file, job_role, interview_duration_minutes):
     num_questions = max(3, interview_duration_minutes // 2)
@@ -60,7 +71,7 @@ resume and the target job role. Questions should feel like a real HR interview.
 
 Rules:
 - Easy: Basic questions about listed skills and background
-- Medium: Situational or project-based questions from their experience  
+- Medium: Situational or project-based questions from their experience
 - Hard: Deep technical or problem-solving questions challenging their expertise
 
 Return ONLY valid JSON, no explanation, no markdown:
@@ -72,12 +83,7 @@ Return ONLY valid JSON, no explanation, no markdown:
 """
 
     try:
-        response = ollama.chat(
-            model="llama3.2",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        text = response["message"]["content"].strip()
+        text = call_llm(prompt)
         text = text.replace("```json", "").replace("```", "").strip()
 
         start = text.find("{")
@@ -90,8 +96,13 @@ Return ONLY valid JSON, no explanation, no markdown:
             if key not in questions:
                 questions[key] = []
 
+        # Hard cap to exact counts
         return {
-            "questions": questions,
+            "questions": {
+                "easy":   questions["easy"][:easy_count],
+                "medium": questions["medium"][:medium_count],
+                "hard":   questions["hard"][:hard_count],
+            },
             "total": num_questions,
             "resume_context": resume_context
         }
@@ -101,20 +112,19 @@ Return ONLY valid JSON, no explanation, no markdown:
         return {"questions": {"easy": [], "medium": [], "hard": []}, "total": 0, "resume_context": ""}
 
     except Exception as e:
-        print(f"Ollama error: {e}")
+        print(f"Groq error: {e}")
         raise
 
 
-# ── 3. Interview Session ─────────────────────────────────────────────────────
+# ── 3. Interview Session ──────────────────────────────────────────────────────
 
 class InterviewSession:
     def __init__(self, question_bank: dict, duration_minutes: int, resume_context: str):
-        self.resume_context    = resume_context
-        self.duration_minutes  = duration_minutes
-        self.scores            = []
-        self.answered          = []  # list of {question, answer, score, feedback}
+        self.resume_context   = resume_context
+        self.duration_minutes = duration_minutes
+        self.scores           = []
+        self.answered         = []
 
-        # Flatten questions: easy first, then medium, then hard
         self.questions = (
             question_bank.get("easy",   []) +
             question_bank.get("medium", []) +
@@ -123,7 +133,6 @@ class InterviewSession:
         self.current_index = 0
 
     def next_question(self):
-        """Return next question or None if interview is over."""
         if self.current_index < len(self.questions):
             q = self.questions[self.current_index]
             self.current_index += 1
@@ -131,7 +140,6 @@ class InterviewSession:
         return None
 
     def submit_answer(self, question: str, answer: str) -> dict:
-        """Evaluate answer using Ollama, return score + feedback."""
         prompt = f"""
 You are a strict but fair HR interviewer evaluating a candidate's answer.
 
@@ -152,12 +160,7 @@ Evaluate the answer and return ONLY valid JSON, no explanation, no markdown:
 }}
 """
         try:
-            response = ollama.chat(
-                model="llama3.2",
-                messages=[{"role": "user", "content": prompt}]
-            )
-
-            text = response["message"]["content"].strip()
+            text = call_llm(prompt)
             text = text.replace("```json", "").replace("```", "").strip()
 
             start = text.find("{")
@@ -176,23 +179,21 @@ Evaluate the answer and return ONLY valid JSON, no explanation, no markdown:
 
         self.scores.append(score)
         self.answered.append({
-            "question":     question,
-            "answer":       answer,
-            "score":        score,
-            "feedback":     feedback,
+            "question":      question,
+            "answer":        answer,
+            "score":         score,
+            "feedback":      feedback,
             "missed_points": missed
         })
 
         return {"score": score, "feedback": feedback, "missed_points": missed}
 
     def interview_summary(self) -> dict:
-        """Return full summary after interview ends."""
         if not self.scores:
             return {"average_score": 0, "total_questions": 0, "details": []}
 
         avg = round(sum(self.scores) / len(self.scores), 2)
 
-        # Performance label
         if avg >= 8:
             performance = "Excellent"
         elif avg >= 6:
@@ -203,8 +204,8 @@ Evaluate the answer and return ONLY valid JSON, no explanation, no markdown:
             performance = "Needs Improvement"
 
         return {
-            "average_score":    avg,
-            "performance":      performance,
-            "total_questions":  len(self.scores),
-            "details":          self.answered
+            "average_score":   avg,
+            "performance":     performance,
+            "total_questions": len(self.scores),
+            "details":         self.answered
         }
