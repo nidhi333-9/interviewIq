@@ -43,7 +43,7 @@ markdown-it-py==4.0.0
 MarkupSafe==3.0.3
 matplotlib==3.10.8
 mdurl==0.1.2
-mediapipe==0.10.14
+mediapipe>=0.10.20
 ml_dtypes==0.5.4
 murmurhash==1.0.15
 numpy==2.4.2
@@ -58,7 +58,7 @@ pdfplumber==0.11.9
 pillow==12.1.1
 preshed==3.0.12
 proto-plus==1.27.2
-protobuf==4.25.9
+protobuf>=5.26.1,<6.0.0
 pyasn1==0.6.3
 pyasn1_modules==0.4.2
 pycparser==3.0
